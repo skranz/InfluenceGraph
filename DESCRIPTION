@@ -1,0 +1,10 @@
+Package: InfluenceGraph
+Type: Package
+Title: Tools for analyzing influence graph among variables.
+Version: 0.1
+Date: 2014-11-28
+Author: Sebastian Kranz
+Maintainer: Sebastian Kranz <sebastian.kranz@uni-ulm.de>
+Description: Tools for analyzing influence graph among variables. If all variables have a finite domain, can create reduced key-value tables.
+License: GPL >= 2
+Depends: igraph, R6,restorepoint, codetools
