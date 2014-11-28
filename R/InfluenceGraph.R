@@ -13,17 +13,21 @@ var.in.expr = function(expr,expr.str, envir=baseenv()) {
 }
 
 
-example.reduce.cartesian = function() {
+examples.InfluenceGraph = function() {
   A = 1:3
   B = quote(A)
   C = quote(A)
-
-  ig = InfluenceGraph$new(exo = list(A=A), endo=list(B=B,C=C))
+  D = quote(B+C)
+  E = 25
+  ig = InfluenceGraph$new(exo = list(A=A), endo=list(B=B,C=C,D=D,E=E))
   self = ig
   ig$build_graph()
+  plot(ig$g)
   ig$get_ancestors("B")
   ig$get_ancestors("A")
   ig$get_descendants("A")
+  ig$make_depth()
+  ig$endo.depth
   
   ig$g
   it.add(it,A)
@@ -38,7 +42,9 @@ InfluenceGraph <- R6Class("InfluenceGraph",
     endo.vars = NULL,
     vars = NULL,
     dependsOn = NULL,
-    depth = NULL, 
+    influencedBy = NULL,
+    depth = NULL,
+    endo.depth = NULL,
     g = NULL,
 
     initialize = function(exo=NULL,endo=NULL) {
@@ -51,8 +57,12 @@ InfluenceGraph <- R6Class("InfluenceGraph",
     build_graph = function() {  
       influence_graph_build_graph(self)
     },
+    make_depth = function() {
+      influence_graph_make_depth(self)
+    },
+
     make_tables = function() {
-      make.influence.graph.tables(ig)
+      influence_graph_make_tables(self)
     },
     get_ancestors = function(var,order=.Machine$integer.max) {
       influence_graph_get_ancestors(var, self, order=order)
@@ -84,43 +94,67 @@ influence_graph_build_graph = function(self) {
   self$g = g
   
   # Compute depth of each endogenous variable
-  #influence_graph_make_depth(self)  
+  self$make_depth()  
   
 }
 
 
 influence_graph_get_ancestors = function(var,self, order=.Machine$integer.max) {
   res = setdiff(self$vars[neighborhood(g,order=order,nodes=var,mode="in")[[1]]], var)
-  if (length(res)==0)
-    res = NULL
+  #if (length(res)==0)
+  #  res = NULL
   res
 }
 
 influence_graph_get_descendants = function(var,self, order=.Machine$integer.max) {
   res = setdiff(self$vars[neighborhood(g,order=order,nodes=var,mode="out")[[1]]], var)
-  if (length(res)==0)
-    res = NULL
+  #if (length(res)==0)
+  #  res = NULL
   res
 }
 
 
 influence_graph_make_depth = function(self) {
+  restore.point("influence_graph_make_depth")
+  endo.vars = self$endo.vars
   g = self$g
   #neighborhood(g,order=.Machine$integer.max,nodes="B",mode="in")
   influencedBy = lapply(self$endo.vars, self$get_ancestors)
+  names(influencedBy) = self$endo.vars
 
-
+  endo.depth = rep(NA, length(endo.vars))
+  independent = sapply(influencedBy, function(el) length(el)==0)
+  endo.depth[independent] = 0
+  
+  depth = c(rep(0, length(self$exo.vars)),endo.depth)
+  names(depth) = self$vars  
+  while(TRUE) {
+    check.vars = self$vars[which(is.na(depth))]
+    if (length(check.vars)==0)
+      break
+    var = check.vars[1]
+    for (var in check.vars) {
+      depth[var] = max(depth[influencedBy[[var]] ])+1
+    }
+  }
+  self$depth = depth
+  self$endo.depth = depth[self$endo.vars]
 }
 
-make.influence.graph.tables = function(self) {
+influence_graph_make_tables = function(self) {
   restore.point("make.influence.table")
+
+  self$tables = vector("list", length(self$vars))
   
+  self$depth
 }
 
-influence.tables.add = function(...) {
-  
-}
-
-conditional.cross = function(B,C,A) {
-  
+make_depth_zero_table = function(self, var) {
+  if (var %in% self$exo.vars) {
+    df = data.frame(var = self$exo[[var]])    
+  } else {
+    df = data.frame(var = eval(self$endo[[var]]))        
+  }
+  colnames(df) = var
+  df
 }
