@@ -35,46 +35,67 @@ examples.InfluenceGraph = function() {
   self = ig
   ig$build_graph()
   ig$plot()
+  oct = ig$make_oct("Z")
+  oct
+  
   #ig$make_tables(cartesian=TRUE)
   ig$make_tables(cartesian=FALSE)
   ig$tables
+  tab = ig$tables[["Z"]]
+  tab = ig$outcomes_table("Z")
+  tab = tab[,c("Z",ig$exo.vars),drop=FALSE]
+  
+  tab = reduce_irrelevant(tab,"C")
+  tab
+  tab = reduce_irrelevant(tab,"E")
+  tab
+  tab = reduce_irrelevant(tab,"J")
+  tab
+  
 
-  D.of.Y = ig$get_x.of.y("D","Y")
-  D.of.X = ig$get_x.of.y("D","X")
-  D.of.W = ig$get_x.of.y("D","W")
+  N=c("left","right")
+  L=1:3
+  R=4:6
+  payoff=quote(case_distinction(
+    L,N=="left",
+    R
+  ))
   
+  ig = InfluenceGraph$new(exo = nlist(N,L,R), endo=nlist(payoff))
+  self = ig
+  ig$build_graph()
+  ig$plot()
+  ig$make_tables(cartesian=FALSE)
+  ig$tables
+  tab = ig$outcomes_table("payoff")
+  tab
   
-  D.of.X
-  D.of.Y
-  D.of.W
-  
-  Y_X.D = reduce.by.x(D.of.X, D.of.Y, x="D")
-  Y_X_W.D = reduce.by.x(Y_X.D, D.of.W, x="D")
+  # reduce irrelevant
 
-  ig$tables[["Y"]]
-  ig$tables[["X"]]
-  ig$tables[["W"]]
-  4*4*3
-  # Procedure:
-  # 1. Reduce all K variables
-  # 2. Reduce using all combination of K-1 variables
-  # 3. ... so on ...
-  # 4. Reduce by all combinations of 2 variables
+  
+  reduce_irrelevant = function(tab, var) {
+    vals = unique(tab[[var]])
+    d = group_by_(tab, .dots=setdiff(colnames(tab),var))     
+    fun = function(df) {
+      df.vals = unique(df[[var]])
+      if (setequal(vals, df.vals)) {
+        df = df[1,,drop=FALSE]
+        df[[var]] = NA
+      }
+      return(df)
+    }
 
-  ig$get_x.of.y("D","Y")
-  ig$common_ancestors(c("Y","X"))
-  ig$common_ancestors(c("Y","W"))
-  
-  plot(ig$g)
-  plot.igraph()
-  ig$get_ancestors("B")
-  ig$get_ancestors("A")
-  ig$get_descendants("A")
-  ig$make_depth()
-  ig$endo.depth
-  
-  ig$g
-  it.add(it,A)
+    do(d, fun(.))
+  }
+  var = "R"
+  tab = ig$outcomes_table("payoff")
+  tab = reduce_irrelevant(tab,"R")
+  tab
+  tab = reduce_irrelevant(tab,"L")
+  tab
+  tab = reduce_irrelevant(tab,"N")
+  tab
+
 }
 
 library(R6)
@@ -101,6 +122,7 @@ InfluenceGraph <- R6Class("InfluenceGraph",
     endo.depth = NULL,
     g = NULL,
     tables = NULL,
+    oct = NULL,
 
     initialize = function(exo=NULL,endo=NULL) {
       self$exo <- exo
@@ -123,8 +145,11 @@ InfluenceGraph <- R6Class("InfluenceGraph",
       influence_graph_make_depth(self)
     },
 
-    make_tables = function(cartesian=FALSE) {
+    make_tables = function(cartesian=TRUE) {
       influence_graph_make_tables(ig=self, cartesian=cartesian)
+    },
+    make_oct = function(var) {
+      influence_graph_make_oct(var,ig=self)
     },
     get_ancestors = function(var,order=.Machine$integer.max) {
       influence_graph_get_ancestors(var, self, order=order)
@@ -135,8 +160,11 @@ InfluenceGraph <- R6Class("InfluenceGraph",
     all_paths_children = function(from, to) {
       influence_graph_all_paths_children(from, to, self)
     },
-    common_ancestors = function(vars,direct.line=TRUE) {
-      influence_graph_common_ancestors(vars, self, direct.line)
+    common_ancestors = function(vars,direct.line=TRUE, only.exo=FALE) {
+      influence_graph_common_ancestors(vars, self, direct.line=direct.line,only.exo=only.exo)
+    },
+    outcomes_table = function(var) {
+      influence_graph_outcomes_table(var,ig=self)
     },
     get_x.of.y = function(x,y) {
       influence_graph_get_x.of.y(x,y,ig)
@@ -156,10 +184,15 @@ InfluenceGraph <- R6Class("InfluenceGraph",
       color[no.influence] <- "brown"
       V(g)$label.color <-color
 
-      lay1 <- layout.sugiyama(g)$layout
-      plot.igraph(g, layout=lay1,edge.arrow.size = edge.arrow.size,
+#       lay1 <- layout.sugiyama(g)$layout
+#       plot.igraph(g, layout=lay1,edge.arrow.size = edge.arrow.size,
+#                   vertex.size = vertex.size, vertex.color="white",
+#                   vertex.label.font = 12, vertex.frame.color="white")
+
+      plot.igraph(g, edge.arrow.size = edge.arrow.size,
                   vertex.size = vertex.size, vertex.color="white",
                   vertex.label.font = 12, vertex.frame.color="white")
+      
       #plot.igraph(self$g, mark.group=mark.group, edge.arrow.size = edge.arrow.size,...)   
       
     }
@@ -248,13 +281,14 @@ influence_graph_make_depth = function(ig) {
 #' 
 #' @param direct.line if TRUE remove common ancestors that only influence all variables
 #'        via another common ancestors
-influence_graph_common_ancestors = function(vars, ig, direct.line=TRUE) {
+influence_graph_common_ancestors = function(vars, ig, direct.line=TRUE, only.exo=FALSE) {
   #x = "X"; y="Y"
   #vars = c("W","X","Y")
   restore.point("influence_graph_common_ancestors")
   influencedBy = ig$influencedBy
   common.anc = intersect.list(influencedBy[vars])
 
+  if (only.exo) return(setdiff(common.anc,ig$exo.vars))
   if (!direct.line) return(common.anc)
   if (length(common.anc)==0) return(NULL)
   
@@ -308,11 +342,13 @@ make_depth_d_table = function(var,d, ig, cartesian=FALSE) {
 make_depth_0_table = function(var, ig) {
   restore.point("make_depth0_table")
   if (var %in% ig$exo.vars) {
-    df = data.frame(var = ig$exo[[var]])    
+    df = data_frame(var = ig$exo[[var]])    
   } else {
-    df = data.frame(var = eval(ig$endo[[var]]))        
+    df = data_frame(var = eval(ig$endo[[var]]))        
   }
   colnames(df) = var
+  rownames(df) = NULL
+
   df
 }
 
@@ -320,6 +356,8 @@ make_cartesian_table = function(var,ig) {
   tab = make_cartesian_parents_table(var,ig)
   vals = eval(ig$endo[[var]], tab)
   tab[[var]] = vals
+  rownames(tab) = NULL
+
   tab
 }
 
@@ -337,7 +375,9 @@ make_cartesian_parents_table = function(var,ig) {
   })
   names(pvals)=pvars
 
-  tab = expand.grid(pvals)
+  tab = expand.grid(pvals, stringsAsFactors = FALSE)
+  rownames(tab) = NULL
+
   tab
 }
 
@@ -361,7 +401,7 @@ make_reduced_parents_table = function(var,ig) {
     combs = combn(pvars,n, simplify=FALSE)
     comb = combs[[1]]
     for (comb in combs) {
-      avars = ig$common_ancestors(comb)
+      avars = ig$common_ancestors(comb, only.exo=TRUE)
       if (length(avars)==0) next
       avar = avars[[1]]
       for (avar in avars) {
@@ -375,6 +415,8 @@ make_reduced_parents_table = function(var,ig) {
     }
 
   }
+  rownames(tab) = NULL
+
   return(tab)
 }
 
@@ -412,11 +454,11 @@ reduce.by.x = function(x.of.left, x.of.right,x = colnames(tab1)[1], keep.x = TRU
   l_r.x
 }
 
-get.element.set = function() {
-  Gt = data.frame(D=1:5, G=c(0,0,0,10,10))
-  Ft = data.frame(D=1:5, F=c(0,0,0,10,10))
-  Yt = data.frame(G=c(0,0,10,10),H=c(1,2,1,2),Y=c(1,2,11,12))
-  Xt = data.frame(F=c(0,0,10,10),E=c(1,2,1,2),X=c(1,2,11,12))
+examples.get.element.set = function() {
+  Gt = data_frame(D=1:5, G=c(0,0,0,10,10))
+  Ft = data_frame(D=1:5, F=c(0,0,0,10,10))
+  Yt = data_frame(G=c(0,0,10,10),H=c(1,2,1,2),Y=c(1,2,11,12))
+  Xt = data_frame(F=c(0,0,10,10),E=c(1,2,1,2),X=c(1,2,11,12))
  
   library(dplyr)
   
