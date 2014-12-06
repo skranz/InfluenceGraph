@@ -35,11 +35,13 @@ examples.InfluenceGraph = function() {
   self = ig
   ig$build_graph()
   ig$plot()
+  ig$make_tables()
+  
   oct = ig$make_oct("Z")
   oct
   
   #ig$make_tables(cartesian=TRUE)
-  ig$make_tables(cartesian=FALSE)
+  ig$make_tables()
   ig$tables
   tab = ig$tables[["Z"]]
   tab = ig$outcomes_table("Z")
@@ -65,7 +67,7 @@ examples.InfluenceGraph = function() {
   self = ig
   ig$build_graph()
   ig$plot()
-  ig$make_tables(cartesian=FALSE)
+  ig$make_tables()
   ig$tables
   tab = ig$outcomes_table("payoff")
   tab
@@ -145,8 +147,8 @@ InfluenceGraph <- R6Class("InfluenceGraph",
       influence_graph_make_depth(self)
     },
 
-    make_tables = function(cartesian=TRUE) {
-      influence_graph_make_tables(ig=self, cartesian=cartesian)
+    make_tables = function() {
+      influence_graph_make_tables(ig=self)
     },
     make_oct = function(var) {
       influence_graph_make_oct(var,ig=self)
@@ -304,7 +306,7 @@ influence_graph_common_ancestors = function(vars, ig, direct.line=TRUE, only.exo
   return(common.anc[is.direct])
 }
 
-influence_graph_make_tables = function(ig, cartesian = FALSE) {
+influence_graph_make_tables = function(ig) {
   restore.point("make.influence.table")
   
   depth = ig$depth
@@ -317,25 +319,9 @@ influence_graph_make_tables = function(ig, cartesian = FALSE) {
   for (d in 0:max.depth) {
     avars = vars[depth==d]
     for (var in avars) {
-      ig$tables[[var]] = make_depth_d_table(var,d=d, ig, cartesian=cartesian)
+      ig$tables[[var]] = make_cartesian_table(var, ig)
     }      
   }  
-}
-
-
-make_depth_d_table = function(var,d, ig, cartesian=FALSE) {  
-  if (d==0) return(make_depth_0_table(var,ig))
-  if (d==1 | cartesian) return(make_cartesian_table(var,ig))
-
-  restore.point("make_depth_d_table")
-
-  # Try to get a smaller parents table than just the cartesian product
-  # if parents have common ancestors that restrict value combinations
-  tab = make_reduced_parents_table(var, ig)
-
-  vals = eval(ig$endo[[var]], tab)
-  tab[[var]] = vals
-  tab
 }
 
 
@@ -353,6 +339,10 @@ make_depth_0_table = function(var, ig) {
 }
 
 make_cartesian_table = function(var,ig) {
+  parents = ig$parents[[var]]
+  if (length(parents)==0)
+    return(make_depth_0_table(var,ig))
+  
   tab = make_cartesian_parents_table(var,ig)
   vals = eval(ig$endo[[var]], tab)
   tab[[var]] = vals
@@ -379,79 +369,6 @@ make_cartesian_parents_table = function(var,ig) {
   rownames(tab) = NULL
 
   tab
-}
-
-#' Table of all relevant parents' value combinations
-#' 
-#' Tries to reduce number of combinations of the cartesian product
-#' if parent variables have common ancestors whose influence
-#' may render some combinantions infeasible
-make_reduced_parents_table = function(var,ig) {
-  restore.point("make_reduced_parents_table")
-
-  pvars = ig$parents[[var]]
-  if (length(pvars)==1) return(make_cartesian_parents_table(var,ig))
-
-  tab = make_cartesian_parents_table(var,ig)
-  
-  # Go through all combinations of at least 2 parent variables
-  n = 2
-  max.n = length(pvars)
-  for (n in 2:max.n) {
-    combs = combn(pvars,n, simplify=FALSE)
-    comb = combs[[1]]
-    for (comb in combs) {
-      avars = ig$common_ancestors(comb, only.exo=TRUE)
-      if (length(avars)==0) next
-      avar = avars[[1]]
-      for (avar in avars) {
-        rtab = reduced.parents.table(comb,avar,ig)
-        # Continue here: intersect tab and rtab
-        old.nrow = NROW(tab)
-        tab = filter.with.table(tab, rtab)
-        cat(paste0("\n",paste0(comb, collapse="_"),".",avar, ": ",
-            old.nrow, " -> ", NROW(tab), ""))
-      }
-    }
-
-  }
-  rownames(tab) = NULL
-
-  return(tab)
-}
-
-reduced.parents.table = function(vars,x,ig) {
-  restore.point("reduced.parents.table")
-  
-  #if (vars[1]=="W") stop()
-  
-  x.of.vars = lapply(vars, function(var) {
-    ig$get_x.of.y(x,var)
-  })
-
-  x.of.res = reduce.by.x(x.of.vars[[1]], x.of.vars[[2]], x=x, keep.x = TRUE)
-  inds = setdiff(seq_along(x.of.vars),1:2)
-  ind = inds[1]
-  for (ind in inds) {
-    x.of.res = reduce.by.x(x.of.res, x.of.vars[[ind]], x=x, keep.x = TRUE)
-  }  
-  # Get rid of x col and duplicates
-  cols = setdiff(colnames(x.of.res),x)
-  x.of.res = unique(x.of.res[,cols])
-  x.of.res
-}
-
-
-#' This helper function needs to be made more memory efficient using C++ code
-reduce.by.x = function(x.of.left, x.of.right,x = colnames(tab1)[1], keep.x = TRUE) {
-  restore.point("reduce.by.x")
-  l_r.x =inner_join(x.of.left, x.of.right, by=x)
-  if (!keep.x) {
-    cols = setdiff(colnames(l_r.x),x)
-    l_r.x = l_r.x[,cols]
-  }
-  l_r.x = unique(l_r.x)
-  l_r.x
 }
 
 examples.get.element.set = function() {
@@ -517,53 +434,3 @@ influence_graph_all_paths_children = function(from,to,ig) {
   names(path.children) = pvars
   path.children
 } 
-
-#' A table that describes for all elements y[i] of y the feasible elements of ancestor x
-#' that can possible lead to y[i].
-#' 
-#' The dimension is at most |x|*|y|
-influence_graph_get_x.of.y = function(x,y,ig) {
-  restore.point("influence_graph_get_x.of.y")
-  #x = "D"; y="Y" 
-  
-  influences = ig$influences; children = ig$children
-  vars = ig$vars
-  if (!y %in% influences[[x]])
-    return(NULL)
-  
-  apc = influence_graph_all_paths_children(x,y,ig=ig)
-  env = new.env()
-  env$x.of.y = NULL
-
-  
-  children = apc[[x]]
-  for (cvar in children) {
-    x.of.child = ig$tables[[cvar]][,c(x,cvar)]
-    recursive.x.of.y(x=x,y=y,var=cvar, x.of.var = x.of.child, apc=apc,env=env)    
-  }
-  env$x.of.y
-} 
-
-recursive.x.of.y = function(x,y,var,x.of.var, apc, env) {
-  restore.point("recursive.x.of.y")
-  
-  #cat("\n\nx=",x," y=",y, " var = ",var,"\n")
-  #print(x.of.var)
-  # have reached destination
-  if (var == y) {
-    if (is.null(env$x.of.y)) {
-      env$x.of.y = x.of.var
-    } else {
-      env$x.of.y = intersect.tables(env$x.of.y, x.of.var)
-    }
-    return()
-  }
-  
-  children = apc[[var]]
-  for (cvar in children) {
-    var.of.child = ig$tables[[cvar]][, c(var,cvar)]
-    x.of.child = inner_join(x.of.var,var.of.child, by=var)
-    x.of.child = x.of.child[,c(x,cvar)]
-    recursive.x.of.y(x=x,y=y,var=cvar, x.of.var = x.of.child, apc=apc,env=env)    
-  }
-}
